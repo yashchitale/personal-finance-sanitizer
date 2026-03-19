@@ -1,0 +1,14 @@
+[
+  {
+    "date_bucket": "2026-W12",
+    "description_hash": "d2e1844c",
+    "amount": 123.45,
+    "source_type": "Trading212"
+  },
+  {
+    "date_bucket": "2026-W12",
+    "description_hash": "c05bd87a",
+    "amount": -2.34,
+    "source_type": "Trading212"
+  }
+]

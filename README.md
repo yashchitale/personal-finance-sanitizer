@@ -1,44 +1,56 @@
 # Personal Finance Data Sanitizer
 
-Anonymizes Starling Bank CSV exports into deterministic JSON for agent analysis.
+Anonymizes personal finance exports into deterministic JSON for agent analysis.
 
-## Quick Start (Windows)
+Supports:
+- Starling CSV exports
+- PDF statements (Trading212 / P60 / payslips)
 
-1. **Install Python 3.10+** + pandas:  
-   ```
-   pip install pandas
-   ```
+## Install
 
-2. **Run**:
-   ```
-   python sanitize.py sample-starling.csv --output sanitized.json --salt my-salt-123
-   ```
+```bash
+pip install -r requirements.txt
+```
+
+`tabula-py` requires Java for table extraction. If Java is unavailable, the script still parses PDFs with `pdfplumber` text/table extraction.
 
 ## Features
-- Hashes counter-party/reference deterministically (SHA256[:8])
-- Buckets dates to ISO week (privacy)
-- Numeric amounts preserved
-- Category/type preserved verbatim
-- Optional notes hashing
 
-## Sample
-```
-python sanitize.py sample-starling.csv --output out.json --salt finance-salt-2026
-```
+- Deterministic hashing (SHA256[:8]) with user-provided salt
+- Date bucketing to ISO week for privacy
+- Amounts preserved as numeric values
+- CSV sanitization keeps type/category fields
+- PDF sanitization emits date/amount/description-hash records
+- Batch mode over `raw/*.csv` and `raw/*.pdf`
 
-Output: `out.json` with anonymized txns + summary stats.
+## Usage
 
-## Full Usage
-Single-file mode:
-```
+### Single-file mode
+
+```bash
 python sanitize.py INPUT.csv --output OUT.json [--salt SALT] [--hash-notes] [--dry-run]
+python sanitize.py INPUT.pdf --output OUT.json [--salt SALT] [--dry-run]
 ```
 
-Batch mode (no input arg):
-```
+### Batch mode
+
+```bash
 python sanitize.py [--salt SALT] [--hash-notes] [--dry-run]
 ```
-This scans `raw/*.csv` and writes matching files to `sanitised/*.json`.
+
+Batch mode scans:
+- `raw/*.csv`
+- `raw/*.pdf`
+
+and writes matching JSON files to `sanitised/*.json`.
+
 The script will create `raw/` and `sanitised/` folders if they do not exist.
+
+## Sample commands
+
+```bash
+python sanitize.py sample-starling.csv --output sample-sanitized.json --salt finance-salt-2026
+python sanitize.py raw/sample-trading212.pdf --output sanitised/sample-trading212.json --salt finance-salt-2026
+```
 
 Safe for sharing with agents — no PII leakage.
