@@ -1,0 +1,26 @@
+[
+  {
+    "date_bucket": "2025-W36",
+    "counter_party_hash": "787b6b51",
+    "reference_hash": "292cdad6",
+    "type": "DIRECT DEBIT",
+    "amount": -1444.81,
+    "category": "GENERAL"
+  },
+  {
+    "date_bucket": "2025-W36",
+    "counter_party_hash": "861744fd",
+    "reference_hash": "e8b94faf",
+    "type": "WORLD",
+    "amount": -56.42,
+    "category": "GROCERIES"
+  },
+  {
+    "date_bucket": "2025-W36",
+    "counter_party_hash": "8f690f4a",
+    "reference_hash": null,
+    "type": "FASTER PAYMENT",
+    "amount": 2500.0,
+    "category": "INCOME"
+  }
+]
