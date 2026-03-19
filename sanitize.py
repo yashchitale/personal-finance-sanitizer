@@ -80,36 +80,69 @@ def build_summary(records: list[dict]) -> dict:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Sanitize Starling CSV exports into anonymized JSON.")
-    p.add_argument("input", help="Path to input Starling CSV")
-    p.add_argument("--output", "-o", required=True, help="Path to output JSON")
+    p = argparse.ArgumentParser(
+        description=(
+            "Sanitize Starling CSV exports into anonymized JSON. "
+            "Single-file mode: provide INPUT and --output. "
+            "Batch mode: omit INPUT to process ./raw/*.csv into ./sanitised/*.json."
+        )
+    )
+    p.add_argument("input", nargs="?", help="Path to input Starling CSV (omit to run batch mode)")
+    p.add_argument("--output", "-o", help="Path to output JSON (required in single-file mode)")
     p.add_argument("--salt", default="finance-salt-2026", help="Salt used for deterministic hashing")
     p.add_argument("--dry-run", action="store_true", help="Preview output and summary without writing output file")
     p.add_argument("--hash-notes", action="store_true", help="Include notes_hash field instead of discarding Notes")
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-
-    input_path = Path(args.input)
-    output_path = Path(args.output)
-
+def process_file(input_path: Path, output_path: Path | None, salt: str, hash_notes: bool, dry_run: bool) -> None:
     df = pd.read_csv(input_path)
-    records = sanitize_dataframe(df, salt=args.salt, hash_notes=args.hash_notes)
+    records = sanitize_dataframe(df, salt=salt, hash_notes=hash_notes)
     summary = build_summary(records)
 
-    if args.dry_run:
+    if dry_run:
+        print(f"=== {input_path} ===")
         print(json.dumps(records, indent=2))
         print("\nSummary:")
         print(json.dumps(summary, indent=2))
         return
+
+    if output_path is None:
+        raise ValueError("output_path is required when dry_run is False")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
     print(f"Wrote {len(records)} sanitized transactions to {output_path}")
     print(json.dumps(summary, indent=2))
+
+
+def main():
+    args = parse_args()
+
+    if args.input:
+        input_path = Path(args.input)
+        if not args.dry_run and not args.output:
+            raise SystemExit("In single-file mode, --output/-o is required unless --dry-run is set")
+        output_path = Path(args.output) if args.output else None
+        process_file(input_path, output_path, args.salt, args.hash_notes, args.dry_run)
+        return
+
+    raw_dir = Path("raw")
+    sanitised_dir = Path("sanitised")
+
+    # Ensure expected batch folders exist.
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    sanitised_dir.mkdir(parents=True, exist_ok=True)
+
+    csv_files = sorted(raw_dir.glob("*.csv"))
+    if not csv_files:
+        print(f"No CSV files found in {raw_dir.resolve()} (expected raw/*.csv)")
+        return
+
+    for csv_path in csv_files:
+        output_path = sanitised_dir / f"{csv_path.stem}.json"
+        process_file(csv_path, output_path, args.salt, args.hash_notes, args.dry_run)
 
 
 if __name__ == "__main__":

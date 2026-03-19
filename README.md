@@ -29,8 +29,16 @@ python sanitize.py sample-starling.csv --output out.json --salt finance-salt-202
 Output: `out.json` with anonymized txns + summary stats.
 
 ## Full Usage
+Single-file mode:
 ```
 python sanitize.py INPUT.csv --output OUT.json [--salt SALT] [--hash-notes] [--dry-run]
 ```
+
+Batch mode (no input arg):
+```
+python sanitize.py [--salt SALT] [--hash-notes] [--dry-run]
+```
+This scans `raw/*.csv` and writes matching files to `sanitised/*.json`.
+The script will create `raw/` and `sanitised/` folders if they do not exist.
 
 Safe for sharing with agents — no PII leakage.
