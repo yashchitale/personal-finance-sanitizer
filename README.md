@@ -21,6 +21,7 @@ pip install -r requirements.txt
 - Amounts preserved as numeric values
 - CSV sanitization keeps type/category fields
 - PDF sanitization emits date/amount/description-hash records
+- Trading212 PDFs: handles rotated pages, multi-column text, and table-style rows more robustly
 - Batch mode over `raw/*.csv` and `raw/*.pdf`
 
 ## Usage

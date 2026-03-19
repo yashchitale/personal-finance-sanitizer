@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - optional dependency runtime failures
 DATE_RE = re.compile(
     r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})\b"
 )
-AMOUNT_RE = re.compile(r"\(?-?£?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})\)?")
+AMOUNT_RE = re.compile(r"\(?[+-]?£?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})\)?")
 
 
 def hash_value(value: str | None, salt: str) -> str | None:
@@ -95,35 +95,124 @@ def infer_pdf_source_type(path: Path) -> str:
     return "PDF"
 
 
-def build_pdf_record(raw_date: str, raw_description: str, raw_amount: str, salt: str, source_type: str):
-    return {
+def build_pdf_record(
+    raw_date: str,
+    raw_description: str,
+    raw_amount: str,
+    salt: str,
+    source_type: str,
+    category: str | None = None,
+):
+    out = {
         "date_bucket": to_iso_week_bucket(raw_date),
         "description_hash": hash_value(raw_description, salt),
         "amount": parse_amount(raw_amount),
         "source_type": source_type,
     }
+    if category:
+        out["category"] = category
+    return out
 
 
-def parse_line_candidate(line: str):
-    date_match = DATE_RE.search(line)
-    if not date_match:
-        return None
+def parse_line_candidates(line: str) -> list[tuple[str, str, str]]:
+    date_matches = list(DATE_RE.finditer(line))
+    if not date_matches:
+        return []
 
-    amount_matches = AMOUNT_RE.findall(line)
-    if not amount_matches:
-        return None
+    candidates: list[tuple[str, str, str]] = []
+    for i, date_match in enumerate(date_matches):
+        start = date_match.start()
+        end = date_matches[i + 1].start() if i + 1 < len(date_matches) else len(line)
+        segment = line[start:end].strip()
 
-    raw_date = date_match.group(1)
-    raw_amount = amount_matches[-1]
+        amount_matches = list(AMOUNT_RE.finditer(segment))
+        if not amount_matches:
+            continue
 
-    line_without_date = line.replace(raw_date, " ", 1)
-    line_without_amount = line_without_date.replace(raw_amount, " ")
-    raw_description = " ".join(line_without_amount.split())
+        raw_date = date_match.group(1)
+        raw_amount = amount_matches[-1].group(0)
 
-    if not raw_description:
-        raw_description = "transaction"
+        segment_wo_date = segment.replace(raw_date, " ", 1)
+        segment_wo_amount = segment_wo_date.replace(raw_amount, " ")
+        raw_description = " ".join(segment_wo_amount.split())
+        if not raw_description:
+            raw_description = "transaction"
 
-    return raw_date, raw_description, raw_amount
+        candidates.append((raw_date, raw_description, raw_amount))
+
+    return candidates
+
+
+def words_to_lines(words: list[dict], y_tol: float = 3.0) -> list[str]:
+    if not words:
+        return []
+
+    rows: list[list[dict]] = []
+    for w in sorted(words, key=lambda x: (x.get("top", 0.0), x.get("x0", 0.0))):
+        top = float(w.get("top", 0.0))
+        if not rows:
+            rows.append([w])
+            continue
+        prev_top = float(rows[-1][0].get("top", 0.0))
+        if abs(top - prev_top) <= y_tol:
+            rows[-1].append(w)
+        else:
+            rows.append([w])
+
+    lines: list[str] = []
+    for row in rows:
+        text = " ".join(str(w.get("text", "")).strip() for w in sorted(row, key=lambda x: x.get("x0", 0.0)))
+        text = " ".join(text.split())
+        if text:
+            lines.append(text)
+    return lines
+
+
+def extract_candidate_lines(page) -> list[str]:
+    lines: list[str] = []
+
+    text = page.extract_text() or ""
+    lines.extend(text.splitlines())
+
+    for angle in (0, 90, 180, 270):
+        try:
+            candidate_page = page if angle == 0 else page.rotate(angle)
+            words = candidate_page.extract_words(use_text_flow=False, keep_blank_chars=False) or []
+            lines.extend(words_to_lines(words))
+        except Exception:
+            continue
+
+    deduped = []
+    seen = set()
+    for line in lines:
+        key = " ".join(str(line).split()).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(line)
+
+    return deduped
+
+
+def extract_records_from_row_cells(row: list, source_type: str, salt: str) -> list[dict]:
+    cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+    if not cells:
+        return []
+
+    full_line = " ".join(cells)
+    records: list[dict] = []
+    for raw_date, raw_description, raw_amount in parse_line_candidates(full_line):
+        category = None
+        if len(cells) >= 4:
+            maybe_category = cells[-1]
+            if maybe_category and not DATE_RE.search(maybe_category) and not AMOUNT_RE.search(maybe_category):
+                category = maybe_category
+        try:
+            records.append(build_pdf_record(raw_date, raw_description, raw_amount, salt, source_type, category=category))
+        except Exception:
+            continue
+
+    return records
 
 
 def extract_pdf_records(pdf_path: Path, salt: str) -> list[dict]:
@@ -132,45 +221,26 @@ def extract_pdf_records(pdf_path: Path, salt: str) -> list[dict]:
 
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
-            text = page.extract_text() or ""
-            for line in text.splitlines():
-                parsed = parse_line_candidate(line)
-                if not parsed:
-                    continue
-                raw_date, raw_description, raw_amount = parsed
-                try:
-                    records.append(build_pdf_record(raw_date, raw_description, raw_amount, salt, source_type))
-                except Exception:
-                    continue
+            for line in extract_candidate_lines(page):
+                for raw_date, raw_description, raw_amount in parse_line_candidates(line):
+                    try:
+                        records.append(build_pdf_record(raw_date, raw_description, raw_amount, salt, source_type))
+                    except Exception:
+                        continue
 
             for table in page.extract_tables() or []:
                 for row in table:
                     if not row:
                         continue
-                    joined = " ".join([str(c) for c in row if c is not None]).strip()
-                    parsed = parse_line_candidate(joined)
-                    if not parsed:
-                        continue
-                    raw_date, raw_description, raw_amount = parsed
-                    try:
-                        records.append(build_pdf_record(raw_date, raw_description, raw_amount, salt, source_type))
-                    except Exception:
-                        continue
+                    records.extend(extract_records_from_row_cells(row, source_type, salt))
 
     if tabula is not None:
         try:
             tabula_tables = tabula.read_pdf(str(pdf_path), pages="all", multiple_tables=True)
             for table_df in tabula_tables or []:
                 for _, row in table_df.fillna("").iterrows():
-                    joined = " ".join([str(x) for x in row.tolist() if str(x).strip()])
-                    parsed = parse_line_candidate(joined)
-                    if not parsed:
-                        continue
-                    raw_date, raw_description, raw_amount = parsed
-                    try:
-                        records.append(build_pdf_record(raw_date, raw_description, raw_amount, salt, source_type))
-                    except Exception:
-                        continue
+                    row_cells = [str(x) for x in row.tolist() if str(x).strip()]
+                    records.extend(extract_records_from_row_cells(row_cells, source_type, salt))
         except Exception:
             pass
 
@@ -180,7 +250,8 @@ def extract_pdf_records(pdf_path: Path, salt: str) -> list[dict]:
             record["date_bucket"],
             record["description_hash"],
             record["amount"],
-            record["source_type"],
+            record.get("source_type"),
+            record.get("category"),
         )
         deduped[key] = record
 
